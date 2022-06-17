@@ -1,0 +1,265 @@
+from django.contrib.auth import authenticate
+from django.shortcuts import render, redirect
+from django.http import HttpResponse
+from django.views.decorators.csrf import csrf_protect
+from . import filter_rooms, filter_devices, get_choices, truncate, search_data
+from django.contrib.auth import login as auth_login
+from django.contrib.auth import logout as auth_logout
+
+from . models import Trakt, Stockwerk, Raum, Geratekategorie, Geratehersteller, Gerat, Ticket
+
+
+def search(request):
+    search_request = request.GET.get('q')
+    if len(search_request) <= 500:
+        search_request_short = truncate.Truncate.truncate_data([{'search_request': search_request}], 'search_request', 40)[0]['search_request']
+        tickets_data = search_data.SearchData.search_tickets(search_request, Ticket.objects.order_by('-created_at').all().values('id', 'title', 'description', 'status', 'created_by__id', 'created_by__first_name', 'created_by__last_name', 'created_by__profile_image_url', 'created_at'))
+
+        tickets_data = get_choices.GetChoices.make_labels_readable(tickets_data, Ticket.StatusOptions, 'status')
+        tickets_data = truncate.Truncate.truncate_data(tickets_data, 'description', 115)
+
+        devices_data = search_data.SearchData.search_devices(search_request, Gerat.objects.order_by('device_category__name', 'name').all().values('device_category__name', 'device_category__icon', 'room__name', 'device_manufacturer__name', 'serial_number', 'description', 'name', 'status', 'id'))
+        devices_data = get_choices.GetChoices.make_labels_readable(devices_data, Gerat.Statusptionen, 'status')
+
+        room_data = search_data.SearchData.search_rooms(search_request, Raum.objects.order_by('name').all().values('building_section__name', 'floor__name', 'name'))
+
+        if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+            return render(request, 'search.html', {'search_request': search_request, 'search_request_short': search_request_short, 'tickets_data': list(tickets_data), 'devices_data': list(devices_data), 'room_data': list(room_data)})
+        else:
+            return render(request, 'index.html', {'current_page_category': 'search', 'current_page_file': 'search.html', 'search_request': search_request, 'search_request_short': search_request_short, 'tickets_data': list(tickets_data), 'devices_data': list(devices_data), 'room_data': list(room_data)})
+    else:
+        return redirect('overview')
+
+
+def overview(request):
+    tickets_data = Ticket.objects.order_by('-created_at').all().values('id', 'title', 'description', 'status', 'created_by__id', 'created_by__first_name', 'created_by__last_name', 'created_by__profile_image_url', 'created_at')[:6]
+    tickets_data = get_choices.GetChoices.make_labels_readable(tickets_data, Ticket.StatusOptions, 'status')
+    tickets_data = truncate.Truncate.truncate_data(tickets_data, 'description', 115)
+
+    devices_data = Gerat.objects.filter(status=Gerat.Statusptionen.NOT_FUNCTIONAL).order_by('device_category__name', 'name').all().values('device_category__name', 'device_category__icon', 'room__name', 'name', 'id')
+
+    unique_rooms_count = Raum.objects.all().count()
+    unique_devices_count = Gerat.objects.all().count()
+    unique_open_tickets_count = Ticket.objects.filter(status=Ticket.StatusOptions.OPEN).all().count()
+
+    if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+        return render(request, 'overview.html', {'tickets_data': list(tickets_data), 'devices_data': list(devices_data), 'unique_rooms_count': unique_rooms_count, 'unique_devices_count': unique_devices_count, 'unique_open_tickets_count': unique_open_tickets_count})
+    else:
+        return render(request, 'index.html', {'current_page_category': 'overview', 'current_page_file': 'overview.html', 'tickets_data': list(tickets_data), 'devices_data': list(devices_data), 'unique_rooms_count': unique_rooms_count, 'unique_devices_count': unique_devices_count, 'unique_open_tickets_count': unique_open_tickets_count})
+
+
+def rooms(request):
+    building_section_data = Trakt.objects.order_by('name').all().values('name', 'id')
+    floor_data = Stockwerk.objects.order_by('name').all().values('name', 'id')
+    room_data = Raum.objects.order_by('name').all().values('building_section__name', 'building_section__id', 'floor__name', 'floor__id', 'name')
+
+    room_data_temp, number_of_filters_applied = filter_rooms.FilterRooms.filter_devices_main(room_data, request.GET, floor_data, building_section_data)
+    if room_data_temp is None:
+        return redirect('rooms')
+    else:
+        room_data = room_data_temp
+
+    unique_rooms_count = room_data.count()
+    unique_floors_count = room_data.values('floor__id').distinct().count()
+    unique_building_sections_count = room_data.values('building_section__id').distinct().count()
+
+    if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+        return render(request, 'rooms.html', {'building_sections': list(building_section_data), 'floors': list(floor_data), 'rooms': list(room_data), 'unique_rooms_count': unique_rooms_count, 'unique_floors_count': unique_floors_count, 'unique_building_sections_count': unique_building_sections_count, 'number_of_filters_applied': number_of_filters_applied})
+    else:
+        return render(request, 'index.html', {'current_page_category': 'rooms', 'current_page_file': 'rooms.html', 'building_sections': list(building_section_data), 'floors': list(floor_data), 'rooms': list(room_data), 'unique_rooms_count': unique_rooms_count, 'unique_floors_count': unique_floors_count, 'unique_building_sections_count': unique_building_sections_count, 'number_of_filters_applied': number_of_filters_applied})
+
+
+def room_details(request, room_name):
+    if Raum.objects.filter(name=room_name).exists():
+        room_data = Raum.objects.filter(name=room_name).values('building_section__name', 'floor__name', 'name')[0]
+        device_categories_data = Geratekategorie.objects.order_by('name').all().values('name', 'id')
+        devices_data = Gerat.objects.filter(room__name=room_name).order_by('device_category__name', 'name').values('device_category__name', 'device_category__icon', 'room__name', 'price', 'device_manufacturer', 'purchase_data', 'warranty_period_years', 'warranty_period_months', 'name', 'status', 'id')
+        devices_statuses_data = get_choices.GetChoices.get_enum_choices(Gerat.Statusptionen, True)
+        device_manufacturers_data = Geratehersteller.objects.order_by('name').all().values('name', 'id')
+
+        devices_data_temp, number_of_filters_applied = filter_devices.FilterDevices.filter_devices_main(devices_data, request.GET, devices_statuses_data, device_categories_data, device_manufacturers_data)
+        if devices_data_temp is None:
+            return redirect('room_details', room_name=room_name)
+        else:
+            devices_data = devices_data_temp
+
+        devices_data = get_choices.GetChoices.make_labels_readable(devices_data, Gerat.Statusptionen, 'status')
+        unique_devices_count = devices_data.count()
+        unique_device_categories_count = devices_data.values('device_category__id').distinct().count()
+        unique_device_manufacturers_count = devices_data.values('device_manufacturer__id').distinct().count()
+
+        if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+            return render(request, 'room-details.html', {'room_data': room_data, 'device_categories_data': list(device_categories_data), 'devices_statuses_data': list(devices_statuses_data), 'devices_data': list(devices_data), 'device_manufacturers_data': list(device_manufacturers_data), 'price_steps': filter_devices.FilterDevices.price_steps, 'remaining_warranty_steps': filter_devices.FilterDevices.remaining_warranty_steps, 'date_of_purchase_steps': filter_devices.FilterDevices.date_of_purchase_steps, 'unique_devices_count': unique_devices_count, 'unique_device_categories_count': unique_device_categories_count, 'unique_device_manufacturers_count': unique_device_manufacturers_count, 'number_of_filters_applied': number_of_filters_applied})
+        else:
+            return render(request, 'index.html', {'current_page_category': 'rooms', 'current_page_file': 'room-details.html', 'room_data': room_data, 'device_categories_data': list(device_categories_data), 'devices_statuses_data': list(devices_statuses_data), 'devices_data': list(devices_data), 'device_manufacturers_data': list(device_manufacturers_data), 'price_steps': filter_devices.FilterDevices.price_steps, 'remaining_warranty_steps': filter_devices.FilterDevices.remaining_warranty_steps, 'date_of_purchase_steps': filter_devices.FilterDevices.date_of_purchase_steps, 'unique_devices_count': unique_devices_count, 'unique_device_categories_count': unique_device_categories_count, 'unique_device_manufacturers_count': unique_device_manufacturers_count, 'number_of_filters_applied': number_of_filters_applied})
+
+    else:
+        return redirect('rooms')
+
+
+def devices(request):
+    device_categories_data = Geratekategorie.objects.order_by('name').all().values('name', 'id')
+    devices_data = Gerat.objects.order_by('device_category__name', 'name').all().values('device_category__name', 'device_category__icon', 'room__name', 'price', 'device_manufacturer', 'purchase_data', 'warranty_period_years', 'warranty_period_months', 'name', 'status', 'id')
+    devices_statuses_data = get_choices.GetChoices.get_enum_choices(Gerat.Statusptionen, True)
+    device_manufacturers_data = Geratehersteller.objects.order_by('name').all().values('name', 'id')
+
+    devices_data_temp, number_of_filters_applied = filter_devices.FilterDevices.filter_devices_main(devices_data, request.GET, devices_statuses_data, device_categories_data, device_manufacturers_data)
+    if devices_data_temp is None:
+        return redirect('devices')
+    else:
+        devices_data = devices_data_temp
+
+    devices_data = get_choices.GetChoices.make_labels_readable(devices_data, Gerat.Statusptionen, 'status')
+    unique_devices_count = devices_data.count()
+    unique_rooms_count = devices_data.values('room__id').distinct().count()
+    unique_device_categories_count = devices_data.values('device_category__id').distinct().count()
+    unique_device_manufacturers_count = devices_data.values('device_manufacturer__id').distinct().count()
+
+    if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+        return render(request, 'devices.html', {'device_categories_data': list(device_categories_data), 'devices_statuses_data': list(devices_statuses_data), 'devices_data': list(devices_data), 'device_manufacturers_data': list(device_manufacturers_data), 'price_steps': filter_devices.FilterDevices.price_steps, 'remaining_warranty_steps': filter_devices.FilterDevices.remaining_warranty_steps, 'date_of_purchase_steps': filter_devices.FilterDevices.date_of_purchase_steps, 'unique_devices_count': unique_devices_count, 'unique_rooms_count': unique_rooms_count, 'unique_device_categories_count': unique_device_categories_count, 'unique_device_manufacturers_count': unique_device_manufacturers_count, 'number_of_filters_applied': number_of_filters_applied})
+    else:
+        return render(request, 'index.html', {'current_page_category': 'devices', 'current_page_file': 'devices.html', 'device_categories_data': list(device_categories_data), 'devices_statuses_data': list(devices_statuses_data), 'devices_data': list(devices_data), 'device_manufacturers_data': list(device_manufacturers_data), 'price_steps': filter_devices.FilterDevices.price_steps, 'remaining_warranty_steps': filter_devices.FilterDevices.remaining_warranty_steps, 'date_of_purchase_steps': filter_devices.FilterDevices.date_of_purchase_steps, 'unique_devices_count': unique_devices_count, 'unique_rooms_count': unique_rooms_count, 'unique_device_categories_count': unique_device_categories_count, 'unique_device_manufacturers_count': unique_device_manufacturers_count, 'number_of_filters_applied': number_of_filters_applied})
+
+
+def device_details(request, device_id):
+    if device_id.isdigit():
+        if Gerat.objects.filter(id=device_id).exists():
+            device_data = Gerat.objects.filter(id=device_id).values('device_category__name', 'device_category__icon', 'room__name', 'price', 'device_manufacturer__name', 'purchase_data', 'warranty_period_years', 'warranty_period_months', 'serial_number', 'name', 'description', 'status', 'id')
+            device_data = get_choices.GetChoices.make_labels_readable(device_data, Gerat.Statusptionen, 'status')[0]
+
+            tickets_data = Ticket.objects.filter(device__id=device_id).order_by('-created_at').all().values('id', 'title', 'description', 'status', 'created_by__id', 'created_by__first_name', 'created_by__last_name', 'created_by__profile_image_url', 'created_at')[:8]
+            tickets_data = get_choices.GetChoices.make_labels_readable(tickets_data, Ticket.StatusOptions, 'status')
+            tickets_data = truncate.Truncate.truncate_data(tickets_data, 'description', 115)
+
+            if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+                return render(request, 'device-details.html', {'device_data': device_data, 'tickets_data': tickets_data})
+            else:
+                return render(request, 'index.html', {'current_page_category': 'devices', 'current_page_file': 'device-details.html', 'device_data': device_data, 'tickets_data': tickets_data})
+
+    return redirect('devices')
+
+
+def ticket_management(request):
+    tickets_data = Ticket.objects.order_by('-created_at').all().values('id', 'title', 'description', 'status', 'created_by__id', 'created_by__first_name', 'created_by__last_name', 'created_by__profile_image_url', 'created_at')
+    tickets_data = get_choices.GetChoices.make_labels_readable(tickets_data, Ticket.StatusOptions, 'status')
+    tickets_data = truncate.Truncate.truncate_data(tickets_data, 'description', 115)
+
+    unique_tickets_count = tickets_data.count()
+    unique_open_tickets_count = tickets_data.filter(status=Ticket.StatusOptions.OPEN).count()
+    unique_closed_tickets_count = tickets_data.filter(status=Ticket.StatusOptions.CLOSED).count()
+
+
+
+    if request.user.is_authenticated:
+        my_tickets_len = tickets_data.filter(created_by__id=request.user.id).count()
+    else:
+        my_tickets_len = None
+
+    if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+        return render(request, 'ticket-management.html', {'tickets_data': list(tickets_data), 'my_tickets_len': my_tickets_len, 'unique_tickets_count': unique_tickets_count, 'unique_open_tickets_count': unique_open_tickets_count, 'unique_closed_tickets_count': unique_closed_tickets_count})
+    else:
+        return render(request, 'index.html', {'current_page_category': 'ticket-management', 'current_page_file': 'ticket-management.html', 'tickets_data': list(tickets_data), 'my_tickets_len': my_tickets_len, 'unique_tickets_count': unique_tickets_count, 'unique_open_tickets_count': unique_open_tickets_count, 'unique_closed_tickets_count': unique_closed_tickets_count})
+
+
+def create_new_ticket(request):
+    if request.user.is_authenticated:
+        if request.user.has_perm('ticket_management.add_ticket'):
+            if request.GET.get('device-id'):
+                selected_device_id = request.GET.get('device-id')
+                if Gerat.objects.filter(id=selected_device_id).exists():
+                    selected_device_name = Gerat.objects.filter(id=selected_device_id).values('name')[0]['name']
+
+                    if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+                        return render(request, 'create-new-ticket.html', {'selected_device_id': selected_device_id, 'selected_device_name': selected_device_name})
+                    else:
+                        return render(request, 'index.html', {'current_page_category': 'ticket-management', 'current_page_file': 'create-new-ticket.html', 'selected_device_id': selected_device_id, 'selected_device_name': selected_device_name})
+
+    return redirect('ticket-management')
+
+
+@csrf_protect
+def submit_new_ticket(request):
+    if request.user.is_authenticated:
+        if request.user.has_perm('ticket_management.add_ticket'):
+            if request.POST.get('device-id'):
+                selected_device_id = request.POST.get('device-id')
+                if Gerat.objects.filter(id=selected_device_id).exists():
+                    if request.POST.get('title') and request.POST.get('description'):
+                        if 40 >= len(request.POST.get('title')) > 0 and 560 >= len(request.POST.get('description')) > 0:
+                            if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+                                new_ticket = Ticket(title=request.POST.get('title'), description=request.POST.get('description'), created_by=request.user, device=Gerat.objects.get(id=selected_device_id), status=Ticket.StatusOptions.OPEN)
+                                new_ticket.save()
+
+                                return HttpResponse(f'Successfully created ticket: #{new_ticket.id}')
+
+            return HttpResponse(status=404)
+    return HttpResponse(status=401)
+
+
+def ticket_details(request, ticket_id):
+    if ticket_id.isdigit():
+        if Ticket.objects.filter(id=ticket_id).exists():
+            ticket_data = Ticket.objects.filter(id=ticket_id).values('id', 'title', 'description', 'status', 'created_by__id', 'created_by__first_name', 'created_by__last_name', 'created_by__profile_image_url', 'created_at', 'device__id', 'device__name')
+            ticket_data = get_choices.GetChoices.make_labels_readable(ticket_data, Ticket.StatusOptions, 'status')[0]
+
+            if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+                return render(request, 'ticket-details.html', {'ticket_data': ticket_data})
+            else:
+                return render(request, 'index.html', {'current_page_category': 'ticket-management', 'current_page_file': 'ticket-details.html', 'ticket_data': ticket_data})
+
+    return redirect('ticket-management')
+
+
+def account(request):
+    if request.user.is_authenticated:
+        tickets_data = Ticket.objects.filter(created_by__id=request.user.id).order_by('-created_at').all().values('id', 'title', 'description', 'status', 'created_by__id', 'created_by__first_name', 'created_by__last_name', 'created_by__profile_image_url', 'created_at')
+        tickets_data = get_choices.GetChoices.make_labels_readable(tickets_data, Ticket.StatusOptions, 'status')
+        tickets_data = truncate.Truncate.truncate_data(tickets_data, 'description', 115)
+
+        if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+            return render(request, 'account.html', {'tickets_data': tickets_data})
+        else:
+            return render(request, 'index.html', {'current_page_category': 'account', 'current_page_file': 'account.html', 'tickets_data': tickets_data})
+    else:
+        if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+            return HttpResponse(status=401)
+        else:
+            return redirect('overview')
+
+
+@csrf_protect
+def login(request):
+    if request.method == 'POST' and request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+        if request.POST['username'] and request.POST['password']:
+            if len(request.POST['username']) < 50 and len(request.POST['password']) < 50:
+                error_on = 'access_token'
+                http_code, error_message, access_token = verify_login.VerifyLogin.get_access_token(request.POST['username'], request.POST['password'])
+                if access_token:
+                    error_on = 'user_data'
+                    http_code, error_message, user_data = verify_login.VerifyLogin.get_user_data(access_token)
+                    if user_data:
+                        error_on = 'user_role'
+                        http_code, error_message, user_role = verify_login.VerifyLogin.get_user_role(access_token)
+                        if user_role:
+                            user = authenticate(request, username=request.POST['username'], password=request.POST['password'], user_data=user_data, user_role=user_role)
+
+                            if user is None:
+                                response = HttpResponse('Unknown error, probably disabled account')
+                            else:
+                                auth_login(request, user)
+                                response = HttpResponse(f'Success')
+
+                            return response
+
+                return HttpResponse(f'Error on: {error_on}, HTTP-Code: {http_code}, Error-Code: {error_message}')
+            return HttpResponse('Username or password is too long')
+        return HttpResponse('Username or password is missing')
+
+
+def logout(request):
+    if request.META.get('HTTP_X_REQUESTED_WITH') == 'XMLHttpRequest':
+        auth_logout(request)
+        return HttpResponse(f'Success')
+    else:
+        auth_logout(request)
+        return redirect('overview')

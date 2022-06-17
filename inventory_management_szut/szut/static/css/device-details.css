@@ -1,0 +1,17 @@
+.page-content > h3:not(.subheader) {
+  margin: 0 1.5rem 1.5rem 1.5rem;
+  -webkit-text-size-adjust: 100%;
+  -moz-text-size-adjust: none;
+  -ms-text-size-adjust: 100%;
+}
+
+.table {
+  margin-bottom: 2rem;
+}
+
+/* Media Queries */
+@media screen and (max-width: 570px) {
+  .table-row-element i  {
+    display: none;
+  }
+}

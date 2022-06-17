@@ -1,0 +1,110 @@
+{% load static %}
+{% load check_include_template %}
+<!DOCTYPE html>
+<html lang="de-DE" dir="ltr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SZUT Inventur Management</title>
+    <meta name="apple-mobile-web-app-title" content="SZUT Inventur">
+    <meta name="application-name" content="SZUT Inventur">
+    <meta name="theme-color" content="#FFFFFF" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#1C1C1D" media="(prefers-color-scheme: dark)">
+    <link rel="apple-touch-icon" sizes="180x180" href="{% static 'images/favicon/apple-touch-icon.png' %}">
+    <link rel="icon" type="image/png" sizes="32x32" href="{% static 'images/favicon/favicon-32x32.png' %}">
+    <link rel="icon" type="image/png" sizes="16x16" href="{% static 'images/favicon/favicon-16x16.png' %}">
+    <link rel="shortcut icon" href="{% static 'images/favicon/favicon.ico' %}">
+    <link rel="stylesheet" href="{% static 'css/main.css' %}" />
+    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script>
+    <script src="{% static 'js/main.js' %}"></script>
+</head>
+<body>
+    <nav class="top-bar-content" role="navigation">
+        <div class="top-bar-header">
+            <div class="menu-button-wrapper" tabindex="0" role="button" aria-pressed="false">
+                <div class="menu-button-icon"><i class="bi bi-list"></i></div>
+            </div>
+            <a class="logo-name" href="{% url 'overview' %}" onclick="loadAjaxContent('{% url 'overview' %}');return false">
+                <img src="{% static 'images/szut-logo.webp' %}" alt="Logo" width="273" height="327">
+                <h1>SZUT Inventur</h1>
+            </a>
+            <div class="top-bar-search" style="">
+                <form id="search-form" action="{% url 'search' %}" method="get" role="search">
+                    <i class="bi bi-search" role="presentation"></i>
+                    <input type="search" name="q" placeholder="Suche nach Räumen, Geräten und Tickets ..." maxlength="500">
+                </form>
+            </div>
+            <div class="account-card-wrapper">
+                <div class="top-bar-account-link" tabindex="0" role="button" aria-pressed="false">
+                    <p>{% if user.is_authenticated %}{{ user.get_full_name }}{% else %}Anmelden{% endif %}<i class="bi bi-chevron-down"></i></p>
+                    {% if user.is_authenticated %}<img src="{% if user.profile_image_url %}{{ user.profile_image_url }}{% endif %}" onerror="this.src='{% static 'images/generic_user_icon.webp' %}'" alt="Profilbild" width="192" height="192">{% endif %}
+                </div>
+                <div class="account-card">
+                    {% if user.is_authenticated %}
+                        <div class="account-card-logged-in">
+                            <img src="{% if user.profile_image_url %}{{ user.profile_image_url }}{% endif %}" onerror="this.src='{% static 'images/generic_user_icon.webp' %}'" alt="Profilbild" width="192" height="192">
+                            <ul>
+                                <li><p>{{ user.get_full_name }}</p></li>
+                                <li><p>{% if user.is_superuser %}System-Admin{% elif user.is_admin %}Admin{% elif user.is_staff %}Mitarbeiter{% elif not user.is_guest %}Schüler{% elif user.is_guest %}Gast{% endif %}</p></li>
+                                {% if user.is_staff or user.is_admin or user.is_superuser %}<li class="link-to-admin-page"><p><a target="_blank" rel="noopener noreferrer" href="/admin/" class="link-to-admin-page-a"><i class="bi bi-box-arrow-up-right"></i>Admin-Seite</a></p></li>{% endif %}
+                                <li>
+                                    <a href="{% url 'account' %}" onclick="loadAjaxContent('{% url 'account' %}');return false">Mein Account</a>
+                                    <a href="{% url 'logout' %}" onclick="logout('{% url 'logout' %}');return false">Abmelden</a>
+                                </li>
+                            </ul>
+                        </div>
+                    {% else %}
+                        <form id="login-form" class="login-form" action="{% url 'login' %}" method="post">
+                            {% csrf_token %}
+                            <label for="username">Benutzername</label>
+                            <input type="text" name="username" required>
+                            <label for="password">Passwort</label>
+                            <input type="password" name="password" required>
+                            <p class="on-login-error"></p>
+                            <button class="login-button" type="submit" value="Login">
+                                <img src="{% static 'images/itslearning-logo.svg' %}" alt="" role="presentation" width="64" height="64">
+                                <p>Anmelden mit itslearning</p>
+                                <div class="login-loader-wrapper">
+                                    <div class="dot-loader"></div>
+                                </div>
+                            </button>
+                        </form>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+    </nav>
+    <main class="main-area-wrapper">
+        <nav class="nav-side-bar" role="navigation">
+            <ul>
+                <li>
+                    <form id="sidebar-search-form" action="{% url 'search' %}" method="get" role="search">
+                        <i class="bi bi-search" role="presentation"></i>
+                        <input type="search" name="q" placeholder="Suche nach ..." maxlength="500">
+                    </form>
+                </li>
+                <li><a id="overview" href="{% url 'overview' %}" onclick="loadAjaxContent('{% url 'overview' %}');return false"><i class="bi bi-file-earmark-post"></i>Übersicht</a></li>
+                <li><a id="rooms" href="{% url 'rooms' %}" onclick="loadAjaxContent('{% url 'rooms' %}');return false"><i class="bi bi-door-open-fill"></i>Räume</a></li>
+                <li><a id="devices" href="{% url 'devices' %}" onclick="loadAjaxContent('{% url 'devices' %}');return false"><i class="bi bi-pc-display"></i>Geräte</a></li>
+                <li><a id="ticket-management" href="{% url 'ticket-management' %}" onclick="loadAjaxContent('{% url 'ticket-management' %}');return false"><i class="bi bi-ticket-fill"></i>Ticket-System</a></li>
+                {% if user.is_authenticated %}
+                    <li><a id="account" href="{% url 'account' %}" onclick="loadAjaxContent('{% url 'account' %}');return false"><i class="bi bi-person-lines-fill"></i>Account</a></li>
+                {% else %}
+                    <li><a id="account" class="account-li-not-logged-in" tabindex="0"><i class="bi bi-person-lines-fill"></i>Account</a></li>
+                {% endif %}
+            </ul>
+        </nav>
+        <div class="nav-side-bar-overlay"></div>
+        <div class="main-content-wrapper">
+            <div id="load-content-error" style="display: none;">
+                <h2>Ein Fehler ist aufgetreten!</h2>
+                <h3>Bitte lade die Seite neu oder versuche es später erneut</h3>
+            </div>
+
+            <div id="page-content" class="page-content">
+                {% if current_page_file|template_exists %}<script>setHighlight('{{ current_page_category }}');</script>{% include current_page_file %}{% else %}<script>setHighlight('{{ current_page_category }}'); loadContentError();</script>{% endif %}
+            </div>
+        </div>
+    </main>
+</body>
+</html>
